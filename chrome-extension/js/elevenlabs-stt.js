@@ -74,7 +74,7 @@ class ElevenLabsSTTClient {
     // ─── Private Methods ──────────────────────────────────────
 
     _connect(config) {
-        const wsUrl = 'wss://api.elevenlabs.io/v1/speech-to-text/stream';
+        const wsUrl = `wss://api.elevenlabs.io/v1/speech-to-text/stream?xi_api_key=${encodeURIComponent(this.apiKey)}`;
 
         try {
             this.ws = new WebSocket(wsUrl);
@@ -92,10 +92,9 @@ class ElevenLabsSTTClient {
     _onOpen(config) {
         console.log('[ElevenLabsSTT] WebSocket connected');
 
-        // Send connection config
+        // Send connection config (API key already in URL)
         const connectionMessage = {
             type: 'connection_request',
-            xi_api_key: this.apiKey,
             model_id: 'scribe_v2_realtime',
             language_code: config.sourceLanguage === 'auto' ? '' : config.sourceLanguage,
         };
