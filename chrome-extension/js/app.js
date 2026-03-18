@@ -580,6 +580,12 @@ class App {
         for (const [id, value] of Object.entries(inputs)) {
             const el = document.getElementById(id);
             if (!el) continue;
+
+            // Don't overwrite password fields that are being edited by user
+            if ((id === 'input-soniox-key' || id === 'input-elevenlabs-key') && el === document.activeElement) {
+                continue; // Skip if user is actively typing
+            }
+
             if (el.type === 'checkbox') {
                 el.checked = value || false;
             } else {
