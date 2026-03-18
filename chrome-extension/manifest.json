@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "My Translator",
+  "version": "1.0.0",
+  "description": "Real-time speech translation for microphone and web tab audio",
+  "permissions": [
+    "sidePanel",
+    "tabCapture",
+    "storage",
+    "activeTab",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "My Translator"
+  }
+}
