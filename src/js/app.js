@@ -7,9 +7,10 @@ import { settingsManager } from './settings.js';
 import { TranscriptUI } from './ui.js';
 import { sonioxClient } from './soniox.js';
 import { elevenLabsTTS } from './elevenlabs-tts.js';
-
+import { googleTTS } from './google-tts.js';
 import { edgeTTSRust } from './edge-tts.js';
 import { audioPlayer } from './audio-player.js';
+import { updater } from './updater.js';
 
 const { invoke } = window.__TAURI__.core;
 const { getCurrentWindow } = window.__TAURI__.window;
@@ -57,12 +58,12 @@ class App {
         audioPlayer.init();
 
         // Wire TTS audio callbacks for providers that use audioPlayer
-        for (const tts of [elevenLabsTTS, edgeTTSRust]) {
+        for (const tts of [elevenLabsTTS, edgeTTSRust, googleTTS]) {
             tts.onAudioChunk = (base64Audio, isFinal) => {
                 audioPlayer.enqueue(base64Audio);
             };
         }
-        for (const tts of [elevenLabsTTS, edgeTTSRust]) {
+        for (const tts of [elevenLabsTTS, edgeTTSRust, googleTTS]) {
             tts.onError = (error) => {
                 console.error('[TTS]', error);
                 this._showToast(error, 'error');
@@ -72,7 +73,10 @@ class App {
         // Window position restore disabled — causes issues on Retina displays
         // await this._restoreWindowPosition();
 
-        console.log('🌐 Personal Translator v0.4.0 initialized');
+        // Check for updates (non-blocking)
+        this._checkForUpdates();
+
+        console.log('🌐 My Translator v0.5.0 initialized');
     }
 
     async _checkPlatformSupport() {
@@ -139,6 +143,25 @@ class App {
         // Compact mode button
         document.getElementById('btn-compact').addEventListener('click', () => {
             this._toggleCompact();
+        });
+
+        // View mode toggle (dual panel)
+        document.getElementById('btn-view-mode').addEventListener('click', () => {
+            this._toggleViewMode();
+        });
+
+        // Font size quick controls
+        document.getElementById('btn-font-up').addEventListener('click', () => this._adjustFontSize(4));
+        document.getElementById('btn-font-down').addEventListener('click', () => this._adjustFontSize(-4));
+
+        // Color dot controls
+        document.querySelectorAll('.color-dot').forEach(dot => {
+            dot.addEventListener('click', () => {
+                document.querySelectorAll('.color-dot').forEach(d => d.classList.remove('active'));
+                dot.classList.add('active');
+                const color = dot.dataset.color;
+                this.transcriptUI.configure({ fontColor: color });
+            });
         });
 
         // Start/Stop button
@@ -267,6 +290,11 @@ class App {
             input.type = input.type === 'password' ? 'text' : 'password';
         });
 
+        document.getElementById('btn-toggle-google-key')?.addEventListener('click', () => {
+            const input = document.getElementById('input-google-tts-key');
+            input.type = input.type === 'password' ? 'text' : 'password';
+        });
+
         // Settings tab switching
         document.querySelectorAll('.settings-tab').forEach(tab => {
             tab.addEventListener('click', () => {
@@ -299,6 +327,11 @@ class App {
             const label = document.getElementById('edge-speed-value');
             const v = parseInt(e.target.value);
             if (label) label.textContent = (v >= 0 ? '+' : '') + v + '%';
+        });
+
+        document.getElementById('range-google-speed')?.addEventListener('input', (e) => {
+            const label = document.getElementById('google-speed-value');
+            if (label) label.textContent = parseFloat(e.target.value).toFixed(1) + 'x';
         });
 
         // Add translation term row
@@ -491,10 +524,17 @@ class App {
         const edgeSpeed = s.edge_tts_speed !== undefined ? s.edge_tts_speed : 20;
         if (edgeSpeedSlider) edgeSpeedSlider.value = edgeSpeed;
         if (edgeSpeedLabel) edgeSpeedLabel.textContent = (edgeSpeed >= 0 ? '+' : '') + edgeSpeed + '%';
-        const ttsEnabledCheckbox = document.getElementById('check-tts-enabled');
-        const ttsDetail = document.getElementById('tts-settings-detail');
-        if (ttsEnabledCheckbox) ttsEnabledCheckbox.checked = !!s.tts_enabled;
-        if (ttsDetail) ttsDetail.style.display = s.tts_enabled ? '' : 'none';
+
+        // Google TTS settings
+        const googleKeyInput = document.getElementById('input-google-tts-key');
+        if (googleKeyInput) googleKeyInput.value = s.google_tts_api_key || '';
+        const googleVoiceSelect = document.getElementById('select-google-voice');
+        if (googleVoiceSelect) googleVoiceSelect.value = s.google_tts_voice || 'vi-VN-Chirp3-HD-Aoede';
+        const googleSpeedSlider = document.getElementById('range-google-speed');
+        const googleSpeedLabel = document.getElementById('google-speed-value');
+        const googleSpeed = s.google_tts_speed || 1.0;
+        if (googleSpeedSlider) googleSpeedSlider.value = googleSpeed;
+        if (googleSpeedLabel) googleSpeedLabel.textContent = googleSpeed + 'x';
 
         // TTS provider
         const providerSelect = document.getElementById('select-tts-provider');
@@ -502,12 +542,6 @@ class App {
             providerSelect.value = s.tts_provider || 'edge';
             this._updateTTSProviderUI(providerSelect.value);
         }
-
-        // TTS speed
-        const speedSlider = document.getElementById('range-tts-speed');
-        const speedLabel = document.getElementById('tts-speed-value');
-        if (speedSlider) speedSlider.value = s.tts_speed || 1.2;
-        if (speedLabel) speedLabel.textContent = s.tts_speed || 1.2;
     }
 
     async _saveSettingsFromForm() {
@@ -541,14 +575,16 @@ class App {
         }
 
         // TTS settings
-        const ttsEnabled = document.getElementById('check-tts-enabled')?.checked || false;
         settings.tts_provider = document.getElementById('select-tts-provider')?.value || 'edge';
         settings.elevenlabs_api_key = document.getElementById('input-elevenlabs-key').value.trim();
         settings.tts_voice_id = document.getElementById('select-tts-voice').value;
         settings.edge_tts_voice = document.getElementById('select-edge-voice')?.value || 'vi-VN-HoaiMyNeural';
         settings.edge_tts_speed = parseInt(document.getElementById('range-edge-speed')?.value || 20);
         settings.tts_speed = parseFloat(document.getElementById('range-tts-speed')?.value || 1.2);
-        settings.tts_enabled = ttsEnabled;
+        settings.google_tts_api_key = document.getElementById('input-google-tts-key')?.value.trim() || '';
+        settings.google_tts_voice = document.getElementById('select-google-voice')?.value || 'vi-VN-Chirp3-HD-Aoede';
+        settings.google_tts_speed = parseFloat(document.getElementById('range-google-speed')?.value || 1.0);
+        settings.tts_enabled = false;
 
         try {
             await settingsManager.save(settings);
@@ -579,14 +615,8 @@ class App {
         this.currentSource = settings.audio_source === 'both' ? 'system' : (settings.audio_source || 'system');
         this._updateSourceButtons();
 
-        // Update TTS state — Edge/Web Speech always available (no key needed)
-        const ttsProvider = settings.tts_provider || 'edge';
-        const needsKey = (ttsProvider === 'elevenlabs' && !settings.elevenlabs_api_key);
-        if (needsKey) {
-            this.ttsEnabled = false;
-        } else {
-            this.ttsEnabled = !!settings.tts_enabled;
-        }
+        // TTS is always OFF on app start — user must toggle on each session
+        this.ttsEnabled = false;
         this._updateTTSButton();
     }
 
@@ -596,9 +626,14 @@ class App {
         const settings = settingsManager.get();
         const provider = settings.tts_provider || 'edge';
 
-        // ElevenLabs requires API key; Edge/Web Speech do not
+        // Check API key for premium providers
         if (provider === 'elevenlabs' && !settings.elevenlabs_api_key) {
             this._showToast('Add ElevenLabs API key in Settings → TTS', 'error');
+            this._showView('settings');
+            return;
+        }
+        if (provider === 'google' && !settings.google_tts_api_key) {
+            this._showToast('Add Google TTS API key in Settings → TTS', 'error');
             this._showView('settings');
             return;
         }
@@ -614,7 +649,7 @@ class App {
                 tts.connect();
                 audioPlayer.resume();
             }
-            const label = { edge: 'Edge TTS (Free)', elevenlabs: 'ElevenLabs' }[provider] || provider;
+            const label = { edge: 'Edge TTS (Free)', google: 'Google Chirp 3 HD', elevenlabs: 'ElevenLabs' }[provider] || provider;
             this._showToast(`TTS narration ON 🔊 (${label})`, 'success');
         } else {
             tts.disconnect();
@@ -627,7 +662,7 @@ class App {
         const settings = settingsManager.get();
         const provider = settings.tts_provider || 'edge';
         if (provider === 'elevenlabs') return elevenLabsTTS;
-        if (provider === 'edge') return edgeTTSRust;
+        if (provider === 'google') return googleTTS;
         return edgeTTSRust;
     }
 
@@ -638,15 +673,19 @@ class App {
                 apiKey: settings.elevenlabs_api_key,
                 voiceId: settings.tts_voice_id || '21m00Tcm4TlvDq8ikWAM',
             });
-        } else if (provider === 'edge') {
+        } else if (provider === 'google') {
+            const voice = settings.google_tts_voice || 'vi-VN-Chirp3-HD-Aoede';
+            const langCode = voice.replace(/-Chirp3.*/, '');
             tts.configure({
-                voice: settings.edge_tts_voice || 'vi-VN-HoaiMyNeural',
-                speed: settings.edge_tts_speed !== undefined ? settings.edge_tts_speed : 20,
+                apiKey: settings.google_tts_api_key,
+                voice: voice,
+                languageCode: langCode,
+                speakingRate: settings.google_tts_speed || 1.0,
             });
         } else {
             tts.configure({
                 voice: settings.edge_tts_voice || 'vi-VN-HoaiMyNeural',
-                speed: settings.edge_tts_speed !== undefined ? settings.edge_tts_speed : 50,
+                speed: settings.edge_tts_speed !== undefined ? settings.edge_tts_speed : 20,
             });
         }
     }
@@ -665,9 +704,21 @@ class App {
 
     _updateTTSProviderUI(provider) {
         const ed = document.getElementById('tts-edge-settings');
+        const go = document.getElementById('tts-google-settings');
         const el = document.getElementById('tts-elevenlabs-settings');
         if (ed) ed.style.display = provider === 'edge' ? '' : 'none';
+        if (go) go.style.display = provider === 'google' ? '' : 'none';
         if (el) el.style.display = provider === 'elevenlabs' ? '' : 'none';
+        // Update hint text
+        const hint = document.getElementById('tts-provider-hint');
+        if (hint) {
+            const hints = {
+                edge: 'Free, natural voices — no API key needed',
+                google: 'Near-human quality — requires Google Cloud API key (1M chars/month free)',
+                elevenlabs: 'Premium quality — requires ElevenLabs API key',
+            };
+            hint.textContent = hints[provider] || '';
+        }
     }
 
     _updateTTSButton() {
@@ -1255,7 +1306,82 @@ class App {
         }
     }
 
+    _toggleViewMode() {
+        const isDual = this.transcriptUI.viewMode === 'dual';
+        const newMode = isDual ? 'single' : 'dual';
+        this.transcriptUI.configure({ viewMode: newMode });
+        const btn = document.getElementById('btn-view-mode');
+        if (btn) btn.classList.toggle('active', newMode === 'dual');
+    }
+
+    _adjustFontSize(delta) {
+        const current = this.transcriptUI.fontSize || 16;
+        const newSize = Math.max(12, Math.min(140, current + delta));
+        this.transcriptUI.configure({ fontSize: newSize });
+
+        // Update display
+        const display = document.getElementById('font-size-display');
+        if (display) display.textContent = newSize;
+
+        // Sync with settings slider
+        const slider = document.getElementById('range-font-size');
+        if (slider) slider.value = newSize;
+        const sliderVal = document.getElementById('font-size-value');
+        if (sliderVal) sliderVal.textContent = `${newSize}px`;
+    }
+
     // ─── Toast ─────────────────────────────────────────────
+
+    async _checkForUpdates() {
+        updater.onUpdateFound = (version, notes) => {
+            this._showUpdateNotification(version, notes);
+        };
+        // Delay check slightly so app finishes loading first
+        setTimeout(() => updater.checkForUpdates(), 3000);
+    }
+
+    _showUpdateNotification(version, notes) {
+        // Remove existing toast
+        const existing = document.querySelector('.toast');
+        if (existing) existing.remove();
+
+        const toast = document.createElement('div');
+        toast.className = 'toast update-toast show';
+        toast.innerHTML = `
+            <span>🆕 Update v${version} available</span>
+            <button id="btn-update-now" style="margin-left:8px;padding:2px 10px;border-radius:4px;border:none;background:#4CAF50;color:#fff;cursor:pointer;font-size:12px;">Update now</button>
+            <button id="btn-update-dismiss" style="margin-left:4px;padding:2px 6px;border-radius:4px;border:none;background:rgba(255,255,255,0.15);color:#fff;cursor:pointer;font-size:12px;">✕</button>
+        `;
+        document.body.appendChild(toast);
+
+        document.getElementById('btn-update-dismiss').addEventListener('click', () => {
+            toast.classList.remove('show');
+            setTimeout(() => toast.remove(), 300);
+        });
+
+        document.getElementById('btn-update-now').addEventListener('click', async () => {
+            const btn = document.getElementById('btn-update-now');
+            btn.textContent = 'Downloading...';
+            btn.disabled = true;
+
+            try {
+                await updater.downloadAndInstall((downloaded, total) => {
+                    if (total > 0) {
+                        const pct = Math.round((downloaded / total) * 100);
+                        btn.textContent = `${pct}%`;
+                    }
+                });
+                btn.textContent = 'Restarting...';
+            } catch (err) {
+                btn.textContent = 'Failed';
+                console.error('[Update]', err);
+                setTimeout(() => {
+                    toast.classList.remove('show');
+                    setTimeout(() => toast.remove(), 300);
+                }, 3000);
+            }
+        });
+    }
 
     _showToast(message, type = 'success') {
         // Remove existing toast

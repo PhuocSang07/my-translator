@@ -1,5 +1,5 @@
 [package]
-name = "personal-translator"
+name = "my-translator"
 version = "0.4.2"
 description = "Personal Real-time Speech Translator"
 authors = ["phucnt"]
@@ -42,3 +42,6 @@ windows = { version = "0.58", features = [
   "Win32_System_Com",
   "Win32_Foundation",
 ] }
+
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-updater = "2.10.0"
