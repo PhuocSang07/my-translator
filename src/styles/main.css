@@ -714,6 +714,35 @@ body {
   margin-bottom: 2px;
 }
 
+/* Language badge — shown when detected language changes */
+.lang-badge {
+  display: inline-block;
+  font-size: 0.7em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.5);
+  background: rgba(99, 140, 255, 0.12);
+  border: 1px solid rgba(99, 140, 255, 0.2);
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+/* Low confidence text — highlighted for uncertain transcriptions */
+.low-confidence {
+  border-left: 2px solid rgba(251, 191, 36, 0.5);
+  padding-left: 6px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.low-confidence::after {
+  content: ' ⚠';
+  font-size: 0.7em;
+  color: var(--warning);
+  opacity: 0.6;
+}
+
 /* Provisional text — dimmed, in-progress */
 .seg-provisional {
   display: block;
@@ -926,6 +955,59 @@ body {
 .term-row .btn-remove-term:hover {
   color: var(--error);
   background: rgba(248, 113, 113, 0.1);
+}
+
+/* General context rows — key/value pairs */
+.general-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 4px;
+  align-items: center;
+}
+.general-row input {
+  flex: 1;
+  min-width: 0;
+}
+.general-row .general-key {
+  flex: 0.4;
+}
+.general-row .general-value {
+  flex: 0.6;
+}
+.general-row .btn-remove-general {
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.general-row .btn-remove-general:hover {
+  color: var(--error);
+  background: rgba(248, 113, 113, 0.1);
+}
+
+/* Context subsections */
+.context-subsection {
+  margin-bottom: 10px;
+}
+.context-subsection textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 36px;
+  margin-top: 4px;
+}
+
+/* Dim hint text */
+.hint-dim {
+  opacity: 0.5;
+  font-size: 0.9em;
 }
 
 /* ─── Settings Sections ────────────────────────────────── */
@@ -1468,4 +1550,155 @@ input[type="range"]::-webkit-slider-thumb:hover {
 @keyframes progressShine {
   0% { transform: translateX(-100%); }
   100% { transform: translateX(200%); }
+}
+
+/* ─── Settings Badge (notification dot) ───────────────── */
+#btn-settings {
+  position: relative;
+}
+
+.settings-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  background: var(--error);
+  border-radius: 50%;
+  box-shadow: 0 0 6px var(--error);
+  animation: badgePulse 2s ease-in-out infinite;
+}
+
+@keyframes badgePulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.2); }
+}
+
+/* ─── About Tab ───────────────────────────────────────── */
+.about-app-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.about-app-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.about-app-version {
+  font-size: 13px;
+  color: var(--accent);
+  font-weight: 500;
+  background: var(--accent-glow);
+  padding: 1px 8px;
+  border-radius: 10px;
+}
+
+.about-links {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.about-links a {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 12px;
+  transition: color var(--transition-fast);
+}
+
+.about-links a:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
+
+/* ─── Update Section ──────────────────────────────────── */
+.update-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.check-update-btn {
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  padding: 4px 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  transition: all var(--transition-fast);
+}
+
+.check-update-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.check-update-btn.spinning svg {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.update-status.has-update {
+  background: rgba(74, 222, 128, 0.08);
+  border: 1px solid rgba(74, 222, 128, 0.2);
+  color: var(--success);
+}
+
+.update-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 6px 14px;
+}
+
+.update-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* ─── Update message (main screen) ────────────────────── */
+.update-hint {
+  position: fixed;
+  bottom: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-input);
+  padding: 4px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  z-index: 50;
+  opacity: 0;
+  animation: fadeInUp 0.3s ease forwards;
+}
+
+.update-hint:hover {
+  color: var(--accent);
+  background: var(--accent-glow);
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
 }

@@ -74,6 +74,7 @@ class App {
         // await this._restoreWindowPosition();
 
         // Check for updates (non-blocking)
+        this._initAboutTab();
         this._checkForUpdates();
 
         console.log('🌐 My Translator v0.5.0 initialized');
@@ -251,6 +252,11 @@ class App {
             this._updateModeUI(e.target.value);
         });
 
+        // Translation type toggle (one-way / two-way)
+        document.getElementById('select-translation-type')?.addEventListener('change', (e) => {
+            this._updateTranslationTypeUI(e.target.value);
+        });
+
         // Soniox link
         document.getElementById('link-soniox').addEventListener('click', (e) => {
             e.preventDefault();
@@ -282,6 +288,10 @@ class App {
 
         document.getElementById('range-max-lines').addEventListener('input', (e) => {
             document.getElementById('max-lines-value').textContent = e.target.value;
+        });
+
+        document.getElementById('range-endpoint-delay')?.addEventListener('input', (e) => {
+            document.getElementById('endpoint-delay-value').textContent = `${(e.target.value / 1000).toFixed(1)}s`;
         });
 
         // Toggle ElevenLabs API key visibility
@@ -339,14 +349,19 @@ class App {
             this._addTermRow('', '');
         });
 
+        // Add general context row
+        document.getElementById('btn-add-general')?.addEventListener('click', () => {
+            this._addGeneralRow('', '');
+        });
+
         // TTS toggle button in overlay
         document.getElementById('btn-tts').addEventListener('click', () => {
             this._toggleTTS();
         });
 
         // Wire Soniox callbacks
-        sonioxClient.onOriginal = (text, speaker) => {
-            this.transcriptUI.addOriginal(text, speaker);
+        sonioxClient.onOriginal = (text, speaker, language) => {
+            this.transcriptUI.addOriginal(text, speaker, language);
         };
 
         sonioxClient.onTranslation = (text) => {
@@ -354,9 +369,9 @@ class App {
             this._speakIfEnabled(text);
         };
 
-        sonioxClient.onProvisional = (text, speaker) => {
+        sonioxClient.onProvisional = (text, speaker, language) => {
             if (text) {
-                this.transcriptUI.setProvisional(text, speaker);
+                this.transcriptUI.setProvisional(text, speaker, language);
             } else {
                 this.transcriptUI.clearProvisional();
             }
@@ -368,6 +383,10 @@ class App {
 
         sonioxClient.onError = (error) => {
             this._showToast(error, 'error');
+        };
+
+        sonioxClient.onConfidence = (avgConfidence) => {
+            this.transcriptUI.setConfidence(avgConfidence);
         };
     }
 
@@ -484,6 +503,25 @@ class App {
         document.getElementById('select-translation-mode').value = s.translation_mode || 'soniox';
         this._updateModeUI(s.translation_mode || 'soniox');
 
+        // Translation type (one-way / two-way)
+        const translationType = s.translation_type || 'one_way';
+        document.getElementById('select-translation-type').value = translationType;
+        this._updateTranslationTypeUI(translationType);
+
+        // Two-way language selects
+        document.getElementById('select-lang-a').value = s.language_a || 'ja';
+        document.getElementById('select-lang-b').value = s.language_b || 'vi';
+
+        // Strict language detection
+        document.getElementById('check-strict-lang').checked = s.language_hints_strict || false;
+
+        // Endpoint delay
+        const endpointDelay = s.endpoint_delay || 3000;
+        const delaySlider = document.getElementById('range-endpoint-delay');
+        if (delaySlider) delaySlider.value = endpointDelay;
+        const delayValue = document.getElementById('endpoint-delay-value');
+        if (delayValue) delayValue.textContent = `${(endpointDelay / 1000).toFixed(1)}s`;
+
         // Audio source radio
         const radioValue = s.audio_source || 'system';
         const radio = document.querySelector(`input[name="audio-source"][value="${radioValue}"]`);
@@ -502,9 +540,25 @@ class App {
 
         document.getElementById('check-show-original').checked = s.show_original !== false;
 
-        // Custom context
+        // Custom context (rich format)
         const ctx = s.custom_context;
-        document.getElementById('input-context-domain').value = ctx?.domain || '';
+        // General context rows
+        const generalList = document.getElementById('context-general-list');
+        if (generalList) {
+            generalList.innerHTML = '';
+            const generalPairs = ctx?.general || [];
+            generalPairs.forEach(g => this._addGeneralRow(g.key, g.value));
+        }
+        // Transcription terms
+        const termsInput = document.getElementById('input-context-terms');
+        if (termsInput) {
+            termsInput.value = (ctx?.terms || []).join('\n');
+        }
+        // Background text
+        const textInput = document.getElementById('input-context-text');
+        if (textInput) {
+            textInput.value = ctx?.text || '';
+        }
         // Load translation terms as rows
         const termsList = document.getElementById('translation-terms-list');
         if (termsList) {
@@ -550,6 +604,11 @@ class App {
             source_language: document.getElementById('select-source-lang').value,
             target_language: document.getElementById('select-target-lang').value,
             translation_mode: document.getElementById('select-translation-mode').value,
+            translation_type: document.getElementById('select-translation-type')?.value || 'one_way',
+            language_a: document.getElementById('select-lang-a')?.value || 'ja',
+            language_b: document.getElementById('select-lang-b')?.value || 'vi',
+            language_hints_strict: document.getElementById('check-strict-lang')?.checked || false,
+            endpoint_delay: parseInt(document.getElementById('range-endpoint-delay')?.value || 3000),
             audio_source: document.querySelector('input[name="audio-source"]:checked')?.value || 'system',
             overlay_opacity: parseInt(document.getElementById('range-opacity').value) / 100,
             font_size: parseInt(document.getElementById('range-font-size').value),
@@ -558,8 +617,23 @@ class App {
             custom_context: null,
         };
 
-        // Parse custom context
-        const domain = document.getElementById('input-context-domain').value.trim();
+        // Parse custom context (rich format)
+        // General key-value pairs
+        const generalPairs = [];
+        document.querySelectorAll('#context-general-list .general-row').forEach(row => {
+            const key = row.querySelector('.general-key')?.value.trim();
+            const value = row.querySelector('.general-value')?.value.trim();
+            if (key && value) generalPairs.push({ key, value });
+        });
+
+        // Transcription terms
+        const termsRaw = document.getElementById('input-context-terms')?.value.trim() || '';
+        const terms = termsRaw ? termsRaw.split('\n').map(t => t.trim()).filter(t => t) : [];
+
+        // Background text
+        const contextText = document.getElementById('input-context-text')?.value.trim() || '';
+
+        // Translation terms
         const translationTerms = [];
         document.querySelectorAll('#translation-terms-list .term-row').forEach(row => {
             const source = row.querySelector('.term-source')?.value.trim();
@@ -567,9 +641,11 @@ class App {
             if (source && target) translationTerms.push({ source, target });
         });
 
-        if (domain || translationTerms.length > 0) {
+        if (generalPairs.length > 0 || terms.length > 0 || contextText || translationTerms.length > 0) {
             settings.custom_context = {
-                domain: domain || null,
+                general: generalPairs,
+                terms: terms,
+                text: contextText || null,
                 translation_terms: translationTerms,
             };
         }
@@ -702,6 +778,22 @@ class App {
         list.appendChild(row);
     }
 
+    _addGeneralRow(key = '', value = '') {
+        const list = document.getElementById('context-general-list');
+        if (!list) return;
+        const row = document.createElement('div');
+        row.className = 'general-row';
+        row.innerHTML = `<input type="text" class="general-key" value="${this._escAttr(key)}" placeholder="Key (e.g. domain)" />` +
+            `<input type="text" class="general-value" value="${this._escAttr(value)}" placeholder="Value (e.g. Medical)" />` +
+            `<button type="button" class="btn-remove-general" title="Remove">×</button>`;
+        row.querySelector('.btn-remove-general').addEventListener('click', () => row.remove());
+        list.appendChild(row);
+    }
+
+    _escAttr(str) {
+        return str.replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
     _updateTTSProviderUI(provider) {
         const ed = document.getElementById('tts-edge-settings');
         const go = document.getElementById('tts-google-settings');
@@ -718,6 +810,26 @@ class App {
                 elevenlabs: 'Premium quality — requires ElevenLabs API key',
             };
             hint.textContent = hints[provider] || '';
+        }
+    }
+
+    _updateTranslationTypeUI(type) {
+        const oneway = document.getElementById('section-oneway-langs');
+        const twoway = document.getElementById('section-twoway-langs');
+        const hintTwoway = document.getElementById('hint-twoway');
+        const strictLang = document.getElementById('section-strict-lang');
+
+        if (type === 'two_way') {
+            if (oneway) oneway.style.display = 'none';
+            if (twoway) twoway.style.display = 'flex';
+            if (hintTwoway) hintTwoway.style.display = 'block';
+            // Hide strict lang in two-way mode (both languages are specified)
+            if (strictLang) strictLang.style.display = 'none';
+        } else {
+            if (oneway) oneway.style.display = 'flex';
+            if (twoway) twoway.style.display = 'none';
+            if (hintTwoway) hintTwoway.style.display = 'none';
+            if (strictLang) strictLang.style.display = 'flex';
         }
     }
 
@@ -765,11 +877,19 @@ class App {
     }
 
     _updateModeUI(mode) {
+        const isSoniox = mode === 'soniox';
+
+        // Toggle hints
         const hintSoniox = document.getElementById('hint-mode-soniox');
         const hintLocal = document.getElementById('hint-mode-local');
+        if (hintSoniox) hintSoniox.style.display = isSoniox ? '' : 'none';
+        if (hintLocal) hintLocal.style.display = !isSoniox ? '' : 'none';
 
-        if (hintSoniox) hintSoniox.style.display = mode === 'soniox' ? '' : 'none';
-        if (hintLocal) hintLocal.style.display = mode === 'local' ? '' : 'none';
+        // Toggle Soniox-only sections
+        const sectionApiKey = document.getElementById('section-api-key');
+        const sectionContext = document.getElementById('section-soniox-context');
+        if (sectionApiKey) sectionApiKey.style.display = isSoniox ? '' : 'none';
+        if (sectionContext) sectionContext.style.display = isSoniox ? '' : 'none';
     }
 
     // ─── Start/Stop ────────────────────────────────────────
@@ -779,8 +899,8 @@ class App {
         this.translationMode = settings.translation_mode || 'soniox';
         console.log('[App] start() called, translation_mode:', this.translationMode, 'settings:', JSON.stringify(settings));
 
-        // Always check Soniox API key (required for all modes)
-        if (!settings.soniox_api_key) {
+        // Check Soniox API key only for cloud mode
+        if (this.translationMode === 'soniox' && !settings.soniox_api_key) {
             this._showToast('Soniox API key is required. Add it in Settings.', 'error');
             this._showView('settings');
             return;
@@ -828,6 +948,11 @@ class App {
             sourceLanguage: settings.source_language,
             targetLanguage: settings.target_language,
             customContext: settings.custom_context,
+            translationType: settings.translation_type || 'one_way',
+            languageA: settings.language_a,
+            languageB: settings.language_b,
+            languageHintsStrict: settings.language_hints_strict || false,
+            endpointDelay: settings.endpoint_delay || 3000,
         });
 
         // Start audio capture — Rust batches audio every 200ms, JS just forwards
@@ -1334,51 +1459,138 @@ class App {
 
     async _checkForUpdates() {
         updater.onUpdateFound = (version, notes) => {
-            this._showUpdateNotification(version, notes);
+            this._onUpdateAvailable(version, notes);
+        };
+        updater.onError = (err) => {
+            const statusText = document.getElementById('update-status-text');
+            if (statusText) statusText.textContent = `⚠️ Check failed: ${err.message || err}`;
+        };
+        updater.onCheckComplete = (hasUpdate) => {
+            const checkBtn = document.getElementById('btn-check-update');
+            if (checkBtn) checkBtn.classList.remove('spinning');
+            if (!hasUpdate && !this._pendingUpdateVersion) {
+                const statusText = document.getElementById('update-status-text');
+                if (statusText) statusText.textContent = '✅ App is up to date';
+            }
         };
         // Delay check slightly so app finishes loading first
-        setTimeout(() => updater.checkForUpdates(), 3000);
+        setTimeout(() => {
+            const statusText = document.getElementById('update-status-text');
+            const checkBtn = document.getElementById('btn-check-update');
+            if (statusText) statusText.textContent = 'Checking for updates...';
+            if (checkBtn) checkBtn.classList.add('spinning');
+            updater.checkForUpdates();
+        }, 3000);
     }
 
-    _showUpdateNotification(version, notes) {
-        // Remove existing toast
-        const existing = document.querySelector('.toast');
+    _triggerUpdateCheck() {
+        const statusText = document.getElementById('update-status-text');
+        const checkBtn = document.getElementById('btn-check-update');
+        if (statusText) statusText.textContent = 'Checking for updates...';
+        if (checkBtn) checkBtn.classList.add('spinning');
+        updater.checkForUpdates();
+    }
+
+    _onUpdateAvailable(version, notes) {
+        this._pendingUpdateVersion = version;
+
+        // 1. Show badge on settings gear
+        const badge = document.getElementById('settings-badge');
+        if (badge) badge.style.display = '';
+
+        // 2. Update About tab status
+        const statusEl = document.getElementById('update-status');
+        const statusText = document.getElementById('update-status-text');
+        const actions = document.getElementById('update-actions');
+        if (statusEl) statusEl.classList.add('has-update');
+        if (statusText) statusText.textContent = `🆕 Update v${version} available`;
+        if (actions) actions.style.display = '';
+
+        // 3. Show subtle hint on main screen
+        const existing = document.querySelector('.update-hint');
         if (existing) existing.remove();
+        const hint = document.createElement('div');
+        hint.className = 'update-hint';
+        hint.textContent = `Update v${version} available — go to Settings → About`;
+        hint.addEventListener('click', () => {
+            this._showView('settings');
+            // Switch to About tab
+            document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.settings-tab-content').forEach(t => t.classList.remove('active'));
+            const aboutTab = document.querySelector('[data-tab="tab-about"]');
+            const aboutContent = document.getElementById('tab-about');
+            if (aboutTab) aboutTab.classList.add('active');
+            if (aboutContent) aboutContent.classList.add('active');
+            hint.remove();
+        });
+        document.body.appendChild(hint);
 
-        const toast = document.createElement('div');
-        toast.className = 'toast update-toast show';
-        toast.innerHTML = `
-            <span>🆕 Update v${version} available</span>
-            <button id="btn-update-now" style="margin-left:8px;padding:2px 10px;border-radius:4px;border:none;background:#4CAF50;color:#fff;cursor:pointer;font-size:12px;">Update now</button>
-            <button id="btn-update-dismiss" style="margin-left:4px;padding:2px 6px;border-radius:4px;border:none;background:rgba(255,255,255,0.15);color:#fff;cursor:pointer;font-size:12px;">✕</button>
-        `;
-        document.body.appendChild(toast);
+        // Auto-hide hint after 8 seconds
+        setTimeout(() => { if (hint.parentNode) hint.remove(); }, 8000);
+    }
 
-        document.getElementById('btn-update-dismiss').addEventListener('click', () => {
-            toast.classList.remove('show');
-            setTimeout(() => toast.remove(), 300);
+    _initAboutTab() {
+        // GitHub links
+        document.getElementById('link-github')?.addEventListener('click', (e) => {
+            e.preventDefault();
+            window.__TAURI__?.opener?.openUrl('https://github.com/phuc-nt/my-translator');
+        });
+        document.getElementById('link-issues')?.addEventListener('click', (e) => {
+            e.preventDefault();
+            window.__TAURI__?.opener?.openUrl('https://github.com/phuc-nt/my-translator/issues');
         });
 
-        document.getElementById('btn-update-now').addEventListener('click', async () => {
-            const btn = document.getElementById('btn-update-now');
-            btn.textContent = 'Downloading...';
-            btn.disabled = true;
+        // Check for Updates button
+        document.getElementById('btn-check-update')?.addEventListener('click', () => {
+            this._triggerUpdateCheck();
+        });
+
+        // Download & Install button
+        document.getElementById('btn-do-update')?.addEventListener('click', async () => {
+            const btnText = document.getElementById('update-btn-text');
+            const btn = document.getElementById('btn-do-update');
+            const progressDiv = document.getElementById('update-progress');
+            const progressFill = document.getElementById('update-progress-fill');
+            const progressPct = document.getElementById('update-progress-pct');
+
+            if (btn) btn.disabled = true;
+            if (btnText) btnText.textContent = 'Downloading...';
+            if (progressDiv) progressDiv.style.display = '';
 
             try {
                 await updater.downloadAndInstall((downloaded, total) => {
                     if (total > 0) {
                         const pct = Math.round((downloaded / total) * 100);
-                        btn.textContent = `${pct}%`;
+                        if (progressFill) progressFill.style.width = `${pct}%`;
+                        if (progressPct) progressPct.textContent = `${pct}%`;
+                        if (btnText) btnText.textContent = `Downloading ${pct}%...`;
                     }
                 });
-                btn.textContent = 'Restarting...';
+                // Install succeeded! Try to restart
+                if (btnText) btnText.textContent = 'Restarting...';
+                try {
+                    const relaunch = window.__TAURI__?.process?.relaunch;
+                    if (relaunch) {
+                        await relaunch();
+                    } else {
+                        const invoke = window.__TAURI__?.core?.invoke;
+                        if (invoke) await invoke('plugin:process|restart');
+                    }
+                } catch (restartErr) {
+                    // Restart failed (e.g. process plugin not available) but update IS installed
+                    console.warn('[Update] Restart failed, update is installed:', restartErr);
+                    if (btnText) btnText.textContent = '✅ Updated! Restart app';
+                    const statusText = document.getElementById('update-status-text');
+                    if (statusText) statusText.textContent = '✅ Update installed — close and reopen the app';
+                    if (btn) btn.disabled = true;
+                }
             } catch (err) {
-                btn.textContent = 'Failed';
+                const errMsg = err?.message || String(err);
+                if (btnText) btnText.textContent = 'Failed — try again';
+                const statusText = document.getElementById('update-status-text');
+                if (statusText) statusText.textContent = `⚠️ Install error: ${errMsg}`;
+                if (btn) btn.disabled = false;
                 console.error('[Update]', err);
-                setTimeout(() => {
-                    toast.classList.remove('show');
-                    setTimeout(() => toast.remove(), 300);
-                }, 3000);
             }
         });
     }
